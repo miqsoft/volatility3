@@ -754,8 +754,13 @@ class task_struct(generic.GenericIntelProcess):
             # kernels >= 6.17 | timekeeper_data[TIMEKEEPER_CORE] | 22c62b9a84b8f16ca0277e133a0cd62a259fee7c
             # tk_core became a macro for this. TIMEKEEPER_CORE is always 0: it is the first
             # enumerator of enum timekeeper_ids (include/linux/timekeeper_internal.h), with
-            # or without CONFIG_POSIX_AUX_CLOCKS.
-            tk_core = vmlinux.object_from_symbol("timekeeper_data")[0]
+            # or without CONFIG_POSIX_AUX_CLOCKS, so the element sits at the symbol address.
+            # Built from the type, not the symbol: a symbol table generated from BTF can
+            # give timekeeper_data no type (void).
+            tk_core = vmlinux.object(
+                object_type="tk_data",
+                offset=vmlinux.get_symbol("timekeeper_data").address,
+            )
         elif vmlinux.has_symbol("tk_core"):
             # kernels >= 3.17 | tk_core | 3fdb14fd1df70325e1e91e1203a699a4803ed741
             tk_core = vmlinux.object_from_symbol("tk_core")
