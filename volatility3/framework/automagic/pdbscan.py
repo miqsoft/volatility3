@@ -403,7 +403,11 @@ class KernelPDBScanner(interfaces.automagic.AutomagicInterface):
             return None
         kernel_hint = 0
         kernel_base = 0
-        physical_layer = context.layers.get("memory_layer")
+        # this virtual layer's own physical layer, not whichever layer is named "memory_layer"
+        physical_layer_name = self.get_physical_layer_name(context, vlayer)
+        if physical_layer_name not in context.layers:
+            return None
+        physical_layer = context.layers[physical_layer_name]
 
         # Try locating kernel base via x64 Low Stub in lower 1MB starting from second page (4KB)
         # If "Discard Low Memory" setting is disabled in BIOS, the Low Stub may be at the third/fourth or further pages
