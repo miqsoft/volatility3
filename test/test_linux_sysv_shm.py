@@ -4,18 +4,38 @@ from types import SimpleNamespace
 
 import pytest
 
-from volatility3.framework.symbols.linux.extensions import linux, vm_area_struct, inode
+from volatility3.framework import exceptions
+from volatility3.framework.symbols.linux.extensions import inode, linux, vm_area_struct
 
 SHM_SB = 0xFFFF888000001000
 OTHER_SB = 0xFFFF888000002000
 
 
-def make_inode(monkeypatch, i_ino, i_sb, i_count=1, has_shm_mnt=True):
-    """Build a fake inode, on a kernel whose shm_mnt mount uses SHM_SB."""
-    symbols = {"shm_mnt": SimpleNamespace(mnt_sb=SHM_SB)} if has_shm_mnt else {}
+class NullPointer(SimpleNamespace):
+    """A NULL pointer: falsy, but its members still read as the shm_mnt mount's."""
+
+    def __bool__(self):
+        return False
+
+
+def make_inode(monkeypatch, i_ino, i_sb, i_count=1, shm_mnt="ok"):
+    """Build a fake inode, on a kernel whose shm_mnt mount uses SHM_SB.
+
+    shm_mnt is "ok", "missing" (no such symbol), "null" (NULL pointer) or
+    "unreadable" (reading the symbol raises InvalidAddressException)."""
+    mounts = {
+        "ok": SimpleNamespace(mnt_sb=SHM_SB),
+        "null": NullPointer(mnt_sb=SHM_SB),
+    }
+
+    def object_from_symbol(name):
+        if shm_mnt == "unreadable":
+            raise exceptions.InvalidAddressException("memory", 0)
+        return mounts[shm_mnt]
+
     vmlinux = SimpleNamespace(
-        has_symbol=lambda name: name in symbols,
-        object_from_symbol=lambda name: symbols[name],
+        has_symbol=lambda name: shm_mnt != "missing",
+        object_from_symbol=object_from_symbol,
     )
     monkeypatch.setattr(
         linux.LinuxUtilities,
@@ -33,18 +53,28 @@ def make_inode(monkeypatch, i_ino, i_sb, i_count=1, has_shm_mnt=True):
 
 
 @pytest.mark.parametrize(
-    "i_ino, i_sb, i_count, has_shm_mnt, expected",
+    "i_ino, i_sb, i_count, shm_mnt, expected",
     [
-        (0, SHM_SB, 1, True, True),  # SysV shm segment 0
-        (0, OTHER_SB, 1, True, False),  # inode 0 on any other mount
-        (0, SHM_SB, 1, False, False),  # kernel without shm_mnt
-        (5, OTHER_SB, 1, True, True),  # ordinary inode
-        (0, SHM_SB, -1, True, False),  # smeared reference count
+        (0, SHM_SB, 1, "ok", True),  # SysV shm segment 0
+        (0, OTHER_SB, 1, "ok", False),  # inode 0 on any other mount
+        (0, SHM_SB, 1, "missing", False),  # kernel without shm_mnt
+        (0, SHM_SB, 1, "null", False),  # shm_mnt is a NULL pointer
+        (0, SHM_SB, 1, "unreadable", False),  # shm_mnt cannot be read
+        (5, OTHER_SB, 1, "ok", True),  # ordinary inode
+        (0, SHM_SB, -1, "ok", False),  # smeared reference count
     ],
-    ids=["shm-ino-0", "other-mount-ino-0", "no-shm_mnt", "ordinary", "negative-count"],
+    ids=[
+        "shm-ino-0",
+        "other-mount-ino-0",
+        "no-shm_mnt",
+        "null-shm_mnt",
+        "unreadable-shm_mnt",
+        "ordinary",
+        "negative-count",
+    ],
 )
-def test_inode_is_valid(monkeypatch, i_ino, i_sb, i_count, has_shm_mnt, expected):
-    fake = make_inode(monkeypatch, i_ino, i_sb, i_count, has_shm_mnt)
+def test_inode_is_valid(monkeypatch, i_ino, i_sb, i_count, shm_mnt, expected):
+    fake = make_inode(monkeypatch, i_ino, i_sb, i_count, shm_mnt)
     assert inode.is_valid(fake) is expected
 
 
